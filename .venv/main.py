@@ -137,7 +137,7 @@ renderWindow.AddRenderer(renderer)
 
 print("Loaded points:", polydata.GetNumberOfPoints())
 print("Actors in renderer:", renderer.GetActors().GetNumberOfItems())
-
+h
 # Configure scene encoder
 configure_serializer(encode_lut=True, skip_light=True)
 
