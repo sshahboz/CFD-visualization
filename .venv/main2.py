@@ -37,6 +37,7 @@ from vtkmodules.vtkCommonDataModel import vtkPolyData
 from vtkmodules.vtkFiltersSources import vtkProgrammableSource
 
 source = vtkProgrammableSource()
+polydata = vtkPolyData()
 
 def load_data():
     output = source.GetPolyDataOutput()
@@ -44,32 +45,54 @@ def load_data():
 
 source.SetExecuteMethod(load_data)
 
-def load_csv_as_polydata(csv_path):
-    import csv
-    points = vtkPoints()
-    dataset_array = vtkFloatArray()
-    dataset_array.SetName("Temperature")
+def load_csv_file():
+    uploaded = state.uploaded_csv
+    print("🪵 RAW uploaded_csv:", repr(uploaded))
 
-    with open(csv_path, newline='') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            try:
-                x = float(row['Particle X-Coordinate X Particle ID (Study 01 - Particles) [m]'])*100000
-                y = float(row['Particle Y-Coordinate X Particle ID (Study 01 - Particles) [m]'])*100000
-                z = float(row['Particle Z-Coordinate X Particle ID (Study 01 - Particles) [m]'])*100000
-                temp = float(row['Temperature X Particle ID (Study 01 - Particles) [degC]'])
+    if not uploaded or "content" not in uploaded:
+        print("❌ No CSV content found.")
+        return
+
+    # Save uploaded bytes to a temporary file
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv", mode="wb")
+    temp.write(uploaded["content"])
+    temp.close()
+    csv_path = temp.name
+    print(f"📄 Saved uploaded file to: {csv_path}")
+
+    # Now read from the temp file and load into polydata
+    def load_csv_as_polydata(file_path):
+        points = vtkPoints()
+        temps = vtkFloatArray()
+        temps.SetName("Temperature")
+
+        with open(file_path, newline="") as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                x = float(row["Particle X-Coordinate X Particle ID (Study 01 - Particles) [m]"]) * 100000
+                y = float(row["Particle Y-Coordinate X Particle ID (Study 01 - Particles) [m]"]) * 100000
+                z = float(row["Particle Z-Coordinate X Particle ID (Study 01 - Particles) [m]"]) * 100000
+                temp = float(row["Temperature X Particle ID (Study 01 - Particles) [degC]"])
                 points.InsertNextPoint(x, y, z)
-                dataset_array.InsertNextValue(temp)
-            except ValueError:
-                continue
+                temps.InsertNextValue(temp)
 
-    polydata = vtkPolyData()
-    polydata.SetPoints(points)
-    polydata.GetPointData().SetScalars(dataset_array)
-    return polydata
+    new_polydata = load_csv_as_polydata(csv_path)
+    polydata.ShallowCopy(new_polydata)
 
-polydata = load_csv_as_polydata("100um.csv")
-print("Loaded points:", polydata.GetNumberOfPoints())
+    # Reconnect pipeline fully
+    glyph_filter.SetInputData(polydata)
+    glyph_filter.Update()
+
+    mapper.SetInputConnection(glyph_filter.GetOutputPort())
+    mapper.SetScalarVisibility(True)
+    mapper.SelectColorArray("Temperature")
+    mapper.SetScalarModeToUsePointFieldData()
+    mapper.SetScalarRange(polydata.GetPointData().GetScalars().GetRange())
+
+    renderWindow.Render()
+    ctrl.view_update()
+
+    print(f"✅ Reloaded {polydata.GetNumberOfPoints()} points from uploaded CSV.")
 
 # Use Glyph Filter
 glyph_filter = vtkVertexGlyphFilter()
@@ -82,7 +105,9 @@ mapper.SetInputConnection(glyph_filter.GetOutputPort())
 mapper.SetScalarVisibility(True)
 mapper.SelectColorArray("Temperature")
 mapper.SetScalarModeToUsePointFieldData()
-temperature_range = polydata.GetPointData().GetScalars().GetRange()
+temperature_range = [0, 100]  # fallback default
+if polydata.GetPointData().GetScalars():
+    temperature_range = polydata.GetPointData().GetScalars().GetRange()
 mapper.SetScalarRange(temperature_range)
 
 
@@ -177,8 +202,6 @@ renderWindowInteractor.SetRenderWindow(renderWindow)
 renderWindowInteractor.GetInteractorStyle().SetCurrentStyleToTrackballCamera()
 
 # Read Data
-csv_path = os.path.join("100um.csv")
-polydata = load_csv_as_polydata(csv_path)
 print("Number of points:", polydata.GetNumberOfPoints())
 print("Bounds:", polydata.GetBounds())
 
@@ -206,7 +229,7 @@ for field, association in fields:
                 "type": association,
             }
         )
-default_array = dataset_array[0]
+default_array = dataset_array[0] if dataset_array else {"text": "Temperature", "range": [0, 100]}
 default_min, default_max = default_array.get("range")
 
 # Mesh
@@ -751,59 +774,6 @@ with SinglePageWithDrawerLayout(server) as layout:
             ctrl.view_update = view.update
             ctrl.view_reset_camera = view.reset_camera
 
-
-
-
-
-
-@ctrl.add("load_csv_file")
-def load_csv_file():
-    uploaded = state.uploaded_csv
-    print("🪵 RAW uploaded_csv:", repr(uploaded))
-
-    if not uploaded or "content" not in uploaded:
-        print("❌ No CSV content found.")
-        return
-
-    # Save uploaded bytes to a temporary file
-    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv", mode="wb")
-    temp.write(uploaded["content"])
-    temp.close()
-    csv_path = temp.name
-    print(f"📄 Saved uploaded file to: {csv_path}")
-
-    # Now read from the temp file and load into polydata
-    def load_csv_as_polydata(file_path):
-        points = vtkPoints()
-        temps = vtkFloatArray()
-        temps.SetName("Temperature")
-
-        with open(file_path, newline="") as file:
-            reader = csv.DictReader(file)
-            for row in reader:
-                x = float(row["Particle X-Coordinate X Particle ID (Study 01 - Particles) [m]"]) * 100000
-                y = float(row["Particle Y-Coordinate X Particle ID (Study 01 - Particles) [m]"]) * 100000
-                z = float(row["Particle Z-Coordinate X Particle ID (Study 01 - Particles) [m]"]) * 100000
-                temp = float(row["Temperature X Particle ID (Study 01 - Particles) [degC]"])
-                points.InsertNextPoint(x, y, z)
-                temps.InsertNextValue(temp)
-
-        poly = vtkPolyData()
-        poly.SetPoints(points)
-        poly.GetPointData().AddArray(temps)
-        poly.GetPointData().SetActiveScalars("Temperature")
-        return poly
-
-    new_polydata = load_csv_as_polydata(csv_path)
-    polydata.ShallowCopy(new_polydata)
-
-    glyph_filter.SetInputData(polydata)
-    glyph_filter.Update()
-    mapper.SetInputConnection(glyph_filter.GetOutputPort())
-    mapper.SetScalarRange(polydata.GetPointData().GetScalars().GetRange())
-    renderWindow.Render()
-
-    print(f"✅ Reloaded {polydata.GetNumberOfPoints()} points from uploaded CSV.")
 
 # -----------------------------------------------------------------------------
 # Main
